@@ -1,0 +1,91 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License,
+ *
+ * Contributors:
+ *     Hao Jiang - initial API and implementation
+ *
+ */
+
+package edu.uchicago.cs.db.subattr.extract.rule
+
+import edu.uchicago.cs.db.subattr.extract.parser.{TInt, TWord}
+import edu.uchicago.cs.db.subattr.ir._
+
+/**
+  * This rule looks at top-level tokens and decide whether to upgrade them into <code>PAny</code>
+  * we need to check tokens at top level (tokens included in the final sequence).
+  * The following cases will be processed:
+  *
+  * 1. TInt will be rewritten as PIntAny as we don't think numbers are representative.
+  * 2. Union that contains only int/word will be rewritten as PLabelAny.
+  *
+  * For the first case, this is different from UseAnyRule as that one will look at only unions,
+  * and this rule will replace every single TInt to PIntAny
+  *
+  * For the second case, we can do this as Unions of single tokens will be processed
+  * by rule UseAny. The only thing left is unions of mixture, which contains only int
+  * or word tokens as symbols are extracted in advance.  In addition, these unions are
+  * not aligned as aligned tokens will be extracted by SameLenMergeRule. So the only
+  * thing left would be combinations of unaligned text/numbers combination, which does
+  * not hurt if we use <code>PAny</code> to represent them.
+  *
+  */
+class GeneralizeTokenRule extends RewriteRule {
+
+  override protected def condition(ptn: Pattern): Boolean = {
+    path.size == 2 && (ptn match {
+      case union: PUnion => GeneralizeTokenRule.check(union)
+      case token: PToken => token.token.isInstanceOf[TInt]
+      case _ => false
+    })
+  }
+
+  override protected def update(ptn: Pattern): Pattern = {
+    ptn match {
+      case token: PToken => {
+        happen()
+        new PIntAny(token.numChar._1)
+      }
+      case union: PUnion => {
+        happen()
+        val childRange = union.numChar
+        if (union.content.contains(PEmpty))
+          new PLabelAny(0, childRange._2)
+        else if (childRange._1 == childRange._2)
+          new PLabelAny(childRange._1)
+        else
+          new PLabelAny(1, -1)
+      }
+      case _ => ptn
+    }
+  }
+}
+
+object GeneralizeTokenRule {
+  def check(target: Pattern): Boolean = {
+
+    target match {
+      case u: PUnion => u.content.map(check).forall(_ == true)
+      case s: PSeq => s.content.map(check).forall(_ == true)
+      case t: PToken => t.token.isInstanceOf[TWord] || t.token.isInstanceOf[TInt]
+      case PEmpty => true
+      case any: PAny => !any.isInstanceOf[PWordAny]
+      case _ => false
+    }
+  }
+}
